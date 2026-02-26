@@ -1,0 +1,47 @@
+name: "Formance Chart Sync"
+description: "Validates Formance chart YAML files against the v4 schema and pushes them to the Ledger schemas API"
+branding:
+  icon: "upload-cloud"
+  color: "purple"
+
+inputs:
+  client_id:
+    description: "Formance OAuth2 client ID"
+    required: true
+  client_secret:
+    description: "Formance OAuth2 client secret"
+    required: true
+  server_url:
+    description: "Formance API base URL (e.g. https://org.eu-west-1.formance.cloud)"
+    required: true
+  ledger:
+    description: "Target ledger name (optional — defaults to ledger.name from chart YAML)"
+    required: false
+  version:
+    description: "Schema version prefix (optional — defaults to the version field in the chart YAML). Build metadata is appended automatically."
+    required: false
+  chart_glob:
+    description: "Glob pattern to match chart files relative to workspace root"
+    required: false
+    default: "**/*.chart.yaml"
+  dry_run:
+    description: "Validate charts without pushing (true/false)"
+    required: false
+    default: "false"
+  force:
+    description: "Skip Ledger version check (true/false)"
+    required: false
+    default: "false"
+
+runs:
+  using: "docker"
+  image: "Dockerfile"
+  env:
+    CLIENT_ID:     ${{ inputs.client_id }}
+    CLIENT_SECRET: ${{ inputs.client_secret }}
+    SERVER_URL:    ${{ inputs.server_url }}
+    LEDGER:        ${{ inputs.ledger }}
+    VERSION:       ${{ inputs.version }}
+    CHART_GLOB:    ${{ inputs.chart_glob }}
+    DRY_RUN:       ${{ inputs.dry_run }}
+    FORCE:         ${{ inputs.force }}

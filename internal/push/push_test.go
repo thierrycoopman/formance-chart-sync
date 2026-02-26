@@ -1,0 +1,134 @@
+package push
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestBuildVersion(t *testing.T) {
+	c := &Client{baseVersion: "v1"}
+
+	prov := Provenance{
+		Repository: "org/my-repo",
+		Branch:     "main",
+		FilePath:   "charts/accounts.chart.yaml",
+		CommitSHA:  "abc1234567890def1234567890abcdef12345678",
+	}
+
+	rawYAML := []byte("apiVersion: formance.com/v1alpha1\nkind: Chart\n")
+	version := c.BuildVersion(rawYAML, prov)
+
+	// Should start with base version + build metadata separator
+	if !strings.HasPrefix(version, "v1+") {
+		t.Errorf("version should start with 'v1+', got: %s", version)
+	}
+
+	// Should contain sanitized repo name (/ becomes -)
+	if !strings.Contains(version, "org-my-repo") {
+		t.Errorf("version should contain sanitized repo name, got: %s", version)
+	}
+
+	// Should contain branch
+	if !strings.Contains(version, ".main.") {
+		t.Errorf("version should contain branch name, got: %s", version)
+	}
+
+	// Should contain truncated commit SHA (7 chars)
+	if !strings.Contains(version, ".abc1234.") {
+		t.Errorf("version should contain 7-char commit SHA, got: %s", version)
+	}
+
+	// Should contain 8-char file hash
+	parts := strings.Split(version, ".")
+	lastPart := parts[len(parts)-1]
+	if len(lastPart) != 8 {
+		t.Errorf("last segment (file hash) should be 8 chars, got: %q (%d chars)", lastPart, len(lastPart))
+	}
+
+	// Should be deterministic
+	version2 := c.BuildVersion(rawYAML, prov)
+	if version != version2 {
+		t.Errorf("BuildVersion should be deterministic: %s != %s", version, version2)
+	}
+
+	// Different YAML content should produce different hash
+	version3 := c.BuildVersion([]byte("different content"), prov)
+	if version == version3 {
+		t.Error("different YAML content should produce different version")
+	}
+}
+
+func TestCompareSemver(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want int // -1, 0, 1
+	}{
+		{"v2.4.0", "v2.4.0", 0},
+		{"v2.4.0", "v2.3.0", 1},
+		{"v2.3.0", "v2.4.0", -1},
+		{"v2.4.1", "v2.4.0", 1},
+		{"v2.4.0", "v2.4.0-rc.2", 1},     // release > pre-release
+		{"v2.4.0-rc.2", "v2.4.0", -1},     // pre-release < release
+		{"v2.4.0-rc.2", "v2.4.0-rc.2", 0}, // equal pre-release
+		{"v2.4.0-rc.2", "v2.4.0-beta.1", 1},  // rc > beta (lexicographic)
+		{"v2.4.0-beta.1", "v2.4.0-rc.2", -1},
+		{"v2.5.0-beta.1", "v2.4.0-rc.2", 1},  // higher minor wins
+		{"v3.0.0", "v2.4.0-rc.2", 1},
+		{"2.4.0", "v2.4.0", 0},            // with/without v prefix
+	}
+
+	for _, tt := range tests {
+		got := compareSemver(tt.a, tt.b)
+		if got != tt.want {
+			t.Errorf("compareSemver(%q, %q) = %d, want %d", tt.a, tt.b, got, tt.want)
+		}
+	}
+}
+
+func TestSupportsSchemas(t *testing.T) {
+	tests := []struct {
+		version string
+		want    bool
+	}{
+		{"v2.4.0-rc.2", true},
+		{"v2.4.0-rc.3", true},
+		{"v2.4.0", true},
+		{"v2.5.0", true},
+		{"v3.0.0", true},
+		{"v2.4.0-beta.1", false},
+		{"v2.4.0-beta.3", false},
+		{"v2.3.13", false},
+		{"v2.3.0", false},
+		{"unknown", false},
+	}
+
+	for _, tt := range tests {
+		vi := &VersionInfo{
+			Components: []ComponentVersion{{Name: "ledger", Version: tt.version}},
+		}
+		got, _ := vi.SupportsSchemas()
+		if got != tt.want {
+			t.Errorf("SupportsSchemas() with ledger %q = %v, want %v", tt.version, got, tt.want)
+		}
+	}
+}
+
+func TestSanitize(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"simple", "simple"},
+		{"org/repo", "org-repo"},
+		{"feature/my-branch", "feature-my-branch"},
+		{"path/to/file.yaml", "path-to-file.yaml"},
+		{"name with spaces", "name-with-spaces"},
+	}
+
+	for _, tt := range tests {
+		got := sanitize(tt.input)
+		if got != tt.want {
+			t.Errorf("sanitize(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}

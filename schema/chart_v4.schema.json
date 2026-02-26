@@ -1,0 +1,775 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "$id": "https://formance.com/schemas/chart_v4.schema.json",
+    "title": "Formance Chart Schema v4.0",
+    "description": "Chart schema v4 aligned with Formance Ledger OpenAPI V2SchemaData. Transactions as named templates (object dict), script field, runtime support, .rules on accounts.",
+    "type": "object",
+    "allOf": [
+        { "$ref": "#/definitions/core_structure" },
+        { "$ref": "#/definitions/business_context" },
+        { "$ref": "#/definitions/assets_layer" },
+        { "$ref": "#/definitions/account_layer" },
+        { "$ref": "#/definitions/transaction_layer" },
+        { "$ref": "#/definitions/reporting_layer" },
+        { "$ref": "#/definitions/placeholder_layer" }
+    ],
+    "definitions": {
+        "core_structure": {
+            "type": "object",
+            "required": ["version", "createdAt", "chart"],
+            "properties": {
+                "version": {
+                    "oneOf": [
+                        { "type": "string" },
+                        { "type": "number" }
+                    ],
+                    "description": "Schema data version — free-form string for your own versioning (e.g., 'v1.0.0', '2026-02', 'draft'). Maps to V2Schema.version."
+                },
+                "createdAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "ISO 8601 timestamp when this chart was created or last modified"
+                },
+                "date": {
+                    "oneOf": [
+                        { "type": "integer", "minimum": 10000101, "maximum": 99999999 },
+                        { "type": "string", "pattern": "^[0-9]{8}$" }
+                    ],
+                    "description": "Legacy chart date in YYYYMMDD format (optional in v4)"
+                }
+            }
+        },
+        "runtime": {
+            "type": "string",
+            "description": "Numscript runtime engine. 'machine' is default, 'experimental-interpreter' uses the new interpreter.",
+            "enum": ["experimental-interpreter", "machine"]
+        },
+        "business_context": {
+            "type": "object",
+            "properties": {
+                "business": {
+                    "type": "object",
+                    "description": "Business context and documentation",
+                    "properties": {
+                        "domain": {
+                            "type": "string",
+                            "enum": ["banking", "payments", "trading", "insurance", "lending", "crypto", "other"]
+                        },
+                        "framework": {
+                            "type": "string",
+                            "enum": ["GAAP", "IFRS", "Basel", "Solvency", "Custom"]
+                        },
+                        "context": { "type": "string" },
+                        "overview": { "type": "string" },
+                        "processes": { "type": "string" },
+                        "regulations": { "type": "string" },
+                        "events": { "type": "string" },
+                        "fees": { "type": "string" },
+                        "accounting": { "type": "string" }
+                    },
+                    "additionalProperties": { "type": "string" }
+                }
+            }
+        },
+        "assets_layer": {
+            "type": "object",
+            "properties": {
+                "assets": {
+                    "type": "array",
+                    "description": "Asset definitions with precision",
+                    "items": { "$ref": "#/definitions/asset_definition" }
+                }
+            }
+        },
+        "asset_definition": {
+            "type": "object",
+            "required": ["code", "precision"],
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "description": "Asset code (e.g., USD, EUR, USDC)",
+                    "pattern": "^[A-Z]{2,10}$"
+                },
+                "precision": {
+                    "type": "integer",
+                    "description": "Decimal precision (e.g., 2 for USD, 6 for USDC, 18 for DAI)",
+                    "minimum": 0,
+                    "maximum": 18
+                },
+                "description": { "type": "string" }
+            }
+        },
+        "account_layer": {
+            "type": "object",
+            "properties": {
+                "ledger": { "$ref": "#/definitions/ledger_config" },
+                "chart": { "$ref": "#/definitions/chart_structure" }
+            }
+        },
+        "ledger_config": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+                "name": { "type": "string" },
+                "description": { "type": "string" },
+                "bucket": { "type": "string" },
+                "stack": { "type": "string" },
+                "features": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                },
+                "configuration": { "type": "object" }
+            }
+        },
+        "chart_structure": {
+            "type": "object",
+            "description": "Chart of accounts — maps to V2ChartOfAccounts. Keys are top-level account segments.",
+            "additionalProperties": { "$ref": "#/definitions/account_node" }
+        },
+        "account_node": {
+            "oneOf": [
+                { "type": "null" },
+                {
+                    "type": "object",
+                    "properties": {
+                        ".self": {
+                            "$ref": "#/definitions/self_marker",
+                            "description": "Marks this account as bookable (can be source/destination in transactions)"
+                        },
+                        ".pattern": {
+                            "type": "string",
+                            "description": "Regex pattern for validating placeholder segment values",
+                            "format": "regex"
+                        },
+                        ".metadata": {
+                            "$ref": "#/definitions/account_metadata",
+                            "description": "Account metadata including nature, owner, controls, etc."
+                        },
+                        ".rules": {
+                            "$ref": "#/definitions/account_rules",
+                            "description": "Account-level rules — maps to V2ChartAccountRules"
+                        }
+                    },
+                    "additionalProperties": { "$ref": "#/definitions/account_node" }
+                }
+            ]
+        },
+        "self_marker": {
+            "type": "object",
+            "description": "Boolean marker — presence indicates account is bookable",
+            "additionalProperties": false
+        },
+        "account_rules": {
+            "type": "object",
+            "description": "Account rules for validation and constraints — maps to V2ChartAccountRules",
+            "additionalProperties": true
+        },
+        "account_metadata": {
+            "type": "object",
+            "description": "Account metadata — all fields require 'default' property with optional type/pattern/enum",
+            "properties": {
+                "nature": {
+                    "allOf": [
+                        { "$ref": "#/definitions/metadata_field" },
+                        {
+                            "properties": {
+                                "default": { "enum": ["asset", "liability", "equity", "revenue", "expense", "mixed"] }
+                            }
+                        }
+                    ],
+                    "description": "Accounting nature of the account"
+                },
+                "normal_balance": {
+                    "allOf": [
+                        { "$ref": "#/definitions/metadata_field" },
+                        {
+                            "properties": {
+                                "default": { "enum": ["debit", "credit"] }
+                            }
+                        }
+                    ],
+                    "description": "Normal (default) balance side — debit for asset/expense, credit for liability/revenue/equity"
+                },
+                "owner": { "$ref": "#/definitions/metadata_field", "description": "Account owner identifier" },
+                "safeguarding": { "$ref": "#/definitions/metadata_field", "description": "Whether funds are safeguarded" },
+                "purpose": { "$ref": "#/definitions/metadata_field", "description": "Purpose of this account" },
+                "classification": { "$ref": "#/definitions/classification_config" },
+                "reconciliation": { "$ref": "#/definitions/reconciliation_config" },
+                "controls": { "$ref": "#/definitions/control_config" },
+                "instruction": { "$ref": "#/definitions/instruction_config" },
+                "reporting": { "$ref": "#/definitions/account_reporting_config" },
+                "lifecycle": { "$ref": "#/definitions/account_lifecycle" },
+                "currency": { "$ref": "#/definitions/metadata_field" },
+                "status": { "$ref": "#/definitions/metadata_field" }
+            },
+            "additionalProperties": { "$ref": "#/definitions/metadata_field" }
+        },
+        "metadata_field": {
+            "$ref": "#/definitions/typed_metadata_field",
+            "description": "Metadata field with required default value and optional type/pattern/enum constraints"
+        },
+        "typed_metadata_field": {
+            "type": "object",
+            "description": "Typed metadata field — default is required, with optional type, pattern, and enum constraints. Non-string defaults (booleans, numbers, objects) are auto-stringified before pushing to the Ledger API.",
+            "required": ["default"],
+            "properties": {
+                "default": {
+                    "description": "Default value (required). Strings are sent as-is; booleans, numbers, and objects are JSON-stringified for the Ledger API."
+                },
+                "type": {
+                    "type": "string",
+                    "description": "Field type for validation and rendering",
+                    "enum": ["string", "number", "boolean", "date", "datetime", "pattern", "enum", "json"]
+                },
+                "pattern": {
+                    "type": "string",
+                    "description": "Regex pattern for validation (used with type: pattern or string)",
+                    "format": "regex"
+                },
+                "enum": {
+                    "type": "array",
+                    "description": "Allowed values (used with type: enum)",
+                    "items": { "type": ["string", "number", "boolean"] }
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Human-readable description of this field"
+                },
+                "required": {
+                    "type": "boolean",
+                    "description": "Whether this field is required at runtime",
+                    "default": false
+                },
+                "format": {
+                    "type": "string",
+                    "description": "Display format hint (e.g., 'YYYY-MM-DD' for dates)"
+                }
+            },
+            "additionalProperties": false
+        },
+        "classification_config": {
+            "type": "object",
+            "properties": {
+                "primary": { "type": "string" },
+                "secondary": { "type": "string" },
+                "regulatory": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                }
+            }
+        },
+        "reconciliation_config": {
+            "type": "object",
+            "properties": {
+                "role": { "type": "string" },
+                "statement_source": { "type": "string" },
+                "statement_format": { "type": "string" },
+                "match_by": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                },
+                "tolerance": { "type": "number" },
+                "frequency": { "type": "string" },
+                "auto_reconcile": { "type": "boolean" }
+            }
+        },
+        "control_config": {
+            "type": "object",
+            "properties": {
+                "limits": {
+                    "type": "object",
+                    "properties": {
+                        "daily": { "type": "number" },
+                        "monthly": { "type": "number" },
+                        "per_transaction": { "type": "number" }
+                    }
+                },
+                "approvals": {
+                    "type": "object",
+                    "properties": {
+                        "required": { "type": "boolean" },
+                        "threshold": { "type": "number" },
+                        "approvers": {
+                            "type": "array",
+                            "items": { "type": "string" }
+                        }
+                    }
+                },
+                "monitoring": {
+                    "type": "object",
+                    "properties": {
+                        "aml": { "type": "boolean" },
+                        "fraud": { "type": "boolean" },
+                        "velocity": { "type": "boolean" },
+                        "compliance": {
+                            "type": "array",
+                            "items": { "type": "string" }
+                        }
+                    }
+                }
+            },
+            "additionalProperties": true
+        },
+        "instruction_config": {
+            "type": "object",
+            "properties": {
+                "channel": { "type": "string" },
+                "format": { "type": "string" },
+                "routing": { "type": "object" },
+                "transformation": { "type": "object" }
+            }
+        },
+        "account_reporting_config": {
+            "type": "object",
+            "properties": {
+                "include_in": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                },
+                "exclude_from": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                },
+                "aggregation_rules": { "type": "object" }
+            }
+        },
+        "account_lifecycle": {
+            "type": "object",
+            "properties": {
+                "created_date": { "type": "string" },
+                "status": {
+                    "type": "string",
+                    "enum": ["active", "inactive", "suspended", "closed"]
+                },
+                "closure_rules": { "type": "object" },
+                "archival_policy": { "type": "object" }
+            }
+        },
+        "transaction_layer": {
+            "type": "object",
+            "properties": {
+                "transactions": {
+                    "$ref": "#/definitions/transaction_templates",
+                    "description": "Transaction templates — maps to V2TransactionTemplates"
+                }
+            }
+        },
+        "transaction_templates": {
+            "type": "object",
+            "description": "Named transaction templates. Keys are template IDs (e.g. DEPOSIT_RECEIVED). Maps to V2TransactionTemplates.",
+            "additionalProperties": { "$ref": "#/definitions/transaction_template" }
+        },
+        "transaction_template": {
+            "type": "object",
+            "required": ["script"],
+            "properties": {
+                "script": {
+                    "type": "string",
+                    "description": "Numscript code for the transaction — maps to V2TransactionTemplate.script"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Human-readable description of this transaction template"
+                },
+                "runtime": {
+                    "$ref": "#/definitions/runtime",
+                    "description": "Numscript runtime engine to use"
+                },
+                "bus_trigger": {
+                    "type": "string",
+                    "description": "Legacy: business event that triggers this transaction"
+                },
+                "timing": {
+                    "type": "string",
+                    "description": "Legacy: when this transaction occurs"
+                },
+                "category": {
+                    "type": "string",
+                    "description": "Grouping category (e.g. deposits, withdrawals, trading)"
+                },
+                "priority": {
+                    "type": "string",
+                    "enum": ["low", "normal", "high", "critical"]
+                },
+                "preconditions": {
+                    "type": "array",
+                    "items": { "type": "object" }
+                },
+                "postconditions": {
+                    "type": "array",
+                    "items": { "type": "object" }
+                },
+                "validation": { "type": "object" },
+                "error_handling": { "type": "object" },
+                "retry_policy": { "type": "object" },
+                "audit": { "type": "object" },
+                "depends_on": {
+                    "type": "array",
+                    "items": {
+                        "oneOf": [
+                            { "type": "string" },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "template_id": { "type": "string" },
+                                    "condition": {
+                                        "type": "string",
+                                        "enum": ["required", "optional", "success", "completion"]
+                                    },
+                                    "timeout": { "type": "integer", "minimum": 0 },
+                                    "wait_for": {
+                                        "type": "string",
+                                        "enum": ["start", "completion"]
+                                    }
+                                },
+                                "required": ["template_id"]
+                            }
+                        ]
+                    }
+                }
+            },
+            "additionalProperties": true
+        },
+        "reporting_layer": {
+            "type": "object",
+            "properties": {
+                "queries": {
+                    "oneOf": [
+                        {
+                            "type": "array",
+                            "description": "Legacy format: array of query definitions with id field",
+                            "items": { "$ref": "#/definitions/query_definition" }
+                        },
+                        {
+                            "type": "object",
+                            "description": "Spec format: named query templates — maps to Ledger API schema queries section",
+                            "additionalProperties": { "$ref": "#/definitions/query_template" }
+                        }
+                    ]
+                },
+                "reportings": {
+                    "type": "array",
+                    "items": { "$ref": "#/definitions/reporting_definition" }
+                }
+            }
+        },
+        "query_template": {
+            "type": "object",
+            "description": "Ledger API query template — parameterized, reusable query definition",
+            "required": ["resource"],
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "Human-readable description"
+                },
+                "resource": {
+                    "type": "string",
+                    "enum": ["accounts", "transactions", "logs", "volumes"],
+                    "description": "Target resource to query"
+                },
+                "params": {
+                    "type": "object",
+                    "description": "Default query parameters (pageSize, sort, startTime, endTime, etc.)",
+                    "properties": {
+                        "pageSize": { "type": "integer", "minimum": 1, "maximum": 1000 },
+                        "sort": { "type": "string", "description": "Sort field and order (e.g. timestamp:desc)" },
+                        "startTime": { "type": "string", "format": "date-time" },
+                        "endTime": { "type": "string", "format": "date-time" },
+                        "expand": { "type": "array", "items": { "type": "string" } },
+                        "useInsertionDate": { "type": "boolean" },
+                        "groupLvl": { "type": "integer", "minimum": 0, "maximum": 10 }
+                    },
+                    "additionalProperties": true
+                },
+                "vars": {
+                    "type": "object",
+                    "description": "Variable declarations with types and optional defaults",
+                    "additionalProperties": {
+                        "oneOf": [
+                            { "type": "string", "description": "Short form: just the type name" },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "type": { "type": "string", "enum": ["string", "int", "boolean", "date"] },
+                                    "default": {}
+                                },
+                                "required": ["type"]
+                            }
+                        ]
+                    }
+                },
+                "body": {
+                    "type": "object",
+                    "description": "Filter body using $match, $and, $or, $not, $lt, $gt, $gte, $lte, $like, $in, $exists operators",
+                    "additionalProperties": true
+                }
+            },
+            "additionalProperties": true
+        },
+        "query_definition": {
+            "type": "object",
+            "description": "Legacy query definition (array format with id field)",
+            "required": ["id", "name", "type"],
+            "properties": {
+                "id": { "type": "string" },
+                "name": { "type": "string" },
+                "type": { "type": "string" },
+                "category": { "type": "string" },
+                "parameters": { "type": "object" },
+                "selection": { "$ref": "#/definitions/query_selection" },
+                "transformations": { "type": "array" },
+                "caching": { "type": "object" },
+                "performance": { "type": "object" }
+            }
+        },
+        "reporting_definition": {
+            "type": "object",
+            "required": ["id", "name", "type"],
+            "properties": {
+                "id": { "type": "string" },
+                "name": { "type": "string" },
+                "type": { "type": "string" },
+                "category": { "type": "string" },
+                "period": { "$ref": "#/definitions/period_definition" },
+                "format": { "type": "string" },
+                "distribution": { "type": "object" },
+                "selection": { "$ref": "#/definitions/query_selection" },
+                "segments": { "$ref": "#/definitions/report_segments" },
+                "template": { "type": "string" },
+                "scheduling": { "type": "object" },
+                "retention": { "type": "object" }
+            }
+        },
+        "report_segments": {
+            "type": "object",
+            "description": "Account segments by nature for balance sheet classification",
+            "properties": {
+                "assets": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                },
+                "liabilities": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                },
+                "equity": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                }
+            }
+        },
+        "query_selection": {
+            "type": "object",
+            "properties": {
+                "accounts_match": {
+                    "oneOf": [
+                        { "$ref": "#/definitions/formance_filter" },
+                        { "type": "null" }
+                    ]
+                },
+                "transactions_match": {
+                    "oneOf": [
+                        { "$ref": "#/definitions/formance_filter" },
+                        { "type": "null" }
+                    ]
+                },
+                "volumes_match": {
+                    "oneOf": [
+                        { "$ref": "#/definitions/formance_filter" },
+                        { "type": "null" }
+                    ]
+                },
+                "time_range": { "type": "object" },
+                "optimization_hints": { "type": "object" }
+            }
+        },
+        "period_definition": {
+            "type": "object",
+            "oneOf": [
+                {
+                    "description": "Relative period — computed from reference date using frequency and offset",
+                    "required": ["frequency"],
+                    "properties": {
+                        "frequency": {
+                            "type": "string",
+                            "enum": ["daily", "weekly", "monthly", "quarterly", "yearly"],
+                            "description": "Period frequency for relative date calculation"
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "default": 1,
+                            "description": "Number of periods back from reference date (0=current, 1=previous)"
+                        },
+                        "start_day_of_week": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 6,
+                            "description": "Day week starts on (0=Sunday, 1=Monday, etc.) — for weekly frequency"
+                        },
+                        "start_day_of_month": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 28,
+                            "description": "Day month/quarter/year starts on — for monthly/quarterly/yearly frequency"
+                        },
+                        "start_month": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 12,
+                            "description": "Month fiscal year starts on (1=Jan, 12=Dec) — for yearly frequency"
+                        },
+                        "cutoff": {
+                            "type": "string",
+                            "pattern": "^\\d{2}:\\d{2}$",
+                            "description": "Time of day cutoff (HH:MM format)"
+                        },
+                        "timezone": {
+                            "type": "string",
+                            "description": "IANA timezone (e.g., America/New_York, UTC)"
+                        }
+                    },
+                    "additionalProperties": false
+                },
+                {
+                    "description": "Custom date range — explicit start and end dates",
+                    "required": ["start", "end"],
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "enum": ["daily", "weekly", "monthly", "quarterly", "yearly", "custom"],
+                            "description": "Period type label (informational)"
+                        },
+                        "start": {
+                            "type": "string",
+                            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                            "description": "Start date (YYYY-MM-DD)"
+                        },
+                        "end": {
+                            "type": "string",
+                            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                            "description": "End date (YYYY-MM-DD)"
+                        },
+                        "cutoff": {
+                            "type": ["string", "integer"],
+                            "description": "Time of day cutoff"
+                        },
+                        "identifier": {
+                            "type": "string",
+                            "description": "Period identifier (e.g., 2025-11)"
+                        },
+                        "timezone": {
+                            "type": "string",
+                            "description": "IANA timezone"
+                        },
+                        "effectiveBalance": {
+                            "type": "boolean",
+                            "description": "Use effective balance calculation"
+                        },
+                        "business_calendar": {
+                            "type": "string",
+                            "description": "Business calendar for day calculations"
+                        }
+                    },
+                    "additionalProperties": false
+                },
+                {
+                    "description": "Point-in-time snapshot — balance sheet at specific moment",
+                    "required": ["at"],
+                    "properties": {
+                        "at": {
+                            "type": "string",
+                            "pattern": "^\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2})?)?$",
+                            "description": "Snapshot datetime (YYYY-MM-DD or YYYY-MM-DDTHH:MM)"
+                        },
+                        "cutoff": {
+                            "type": ["string", "integer"],
+                            "description": "Time of day cutoff"
+                        },
+                        "identifier": {
+                            "type": "string",
+                            "description": "Period identifier"
+                        },
+                        "timezone": {
+                            "type": "string",
+                            "description": "IANA timezone"
+                        },
+                        "effectiveBalance": {
+                            "type": "boolean",
+                            "description": "Use effective balance calculation"
+                        }
+                    },
+                    "additionalProperties": false
+                },
+                {
+                    "description": "Aging period — for aging reports with buckets",
+                    "required": ["type", "start", "end", "step"],
+                    "properties": {
+                        "type": { "const": "aging" },
+                        "start": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+                        "end": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+                        "step": { "type": "integer", "minimum": 1 },
+                        "buckets": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "label": { "type": "string" },
+                                    "min_days": { "type": "integer" },
+                                    "max_days": { "type": "integer" }
+                                }
+                            }
+                        },
+                        "cutoff": { "type": ["string", "integer"] },
+                        "identifier": { "type": "string" },
+                        "timezone": { "type": "string" }
+                    },
+                    "additionalProperties": false
+                }
+            ]
+        },
+        "formance_filter": {
+            "type": "object",
+            "description": "Formance ledger filtering query",
+            "additionalProperties": true
+        },
+        "placeholder_layer": {
+            "type": "object",
+            "properties": {
+                "placeholders": {
+                    "type": "object",
+                    "description": "Placeholder definitions with Numscript types",
+                    "additionalProperties": { "$ref": "#/definitions/placeholder_definition" }
+                }
+            }
+        },
+        "placeholder_definition": {
+            "type": "object",
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "description": "Numscript variable type",
+                    "enum": ["account", "asset", "string", "number", "monetary", "portion", "boolean"]
+                },
+                "pattern": {
+                    "type": "string",
+                    "description": "Regex pattern for validation",
+                    "format": "regex"
+                },
+                "validation_function": {
+                    "type": "string",
+                    "description": "Custom validation function name"
+                },
+                "description": { "type": "string" },
+                "examples": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                },
+                "dependencies": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                }
+            }
+        }
+    }
+}

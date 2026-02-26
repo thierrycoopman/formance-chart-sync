@@ -1,0 +1,73 @@
+version: v1.0-draft
+createdAt: 2026-01-01T00:00:00Z
+ledger:
+  name: my-ledger
+  description: My ledger
+assets:
+  - code: USD
+    precision: 2
+    description: US Dollars
+chart:
+  accounts:
+    $account_id:
+      .pattern: ^[a-zA-Z0-9_]+$
+      .self: {}
+      .metadata:
+        purpose:
+          default: Individual account
+      main:
+        .metadata:
+          nature:
+            default: liability
+  banks:
+    $bank_id:
+      .pattern: ^[a-zA-Z0-9_]+$
+      .self: {}
+      .metadata:
+        purpose:
+          default: Bank account
+      main:
+        .metadata:
+          nature:
+            default: asset
+transactions:
+  DEPOSIT:
+    description: Deposit funds into an account
+    runtime: experimental-interpreter
+    script: |
+      vars {
+        monetary $amount
+        account $account_id
+        account $bank_id
+      }
+
+      send $amount (
+        source = @bank:$bank_id:main allowing unbounded overdraft
+        destination = @accounts:$account_id:main
+      )
+
+      set_tx_meta("type", "deposit")
+placeholders:
+  account_id:
+    type: account
+    pattern: ^[a-zA-Z0-9_]+$
+    description: Account identifier
+    examples:
+      - user_123
+      - merchant_456
+      - acct_789
+  amount:
+    type: monetary
+    description: Amount to deposit
+    examples:
+      - USD/2 1000
+      - USD/2 5000
+      - EUR/2 2500
+  bank_id:
+    type: account
+    pattern: ^[a-zA-Z0-9_]+$
+    description: Account identifier
+    examples:
+      - bank_01
+      - DE1234567892211
+      - FR987654321001

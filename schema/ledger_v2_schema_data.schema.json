@@ -1,0 +1,158 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "$id": "https://formance.com/schemas/ledger_v2_schema_data.schema.json",
+    "title": "Formance Ledger V2SchemaData",
+    "description": "Validates the extracted JSON payload before sending to the Ledger InsertSchema API. Derived from the Ledger OpenAPI V2SchemaData definition.",
+    "type": "object",
+    "required": ["chart", "transactions"],
+    "additionalProperties": false,
+    "properties": {
+        "chart": {
+            "$ref": "#/definitions/V2ChartOfAccounts"
+        },
+        "transactions": {
+            "$ref": "#/definitions/V2TransactionTemplates"
+        },
+        "queries": {
+            "$ref": "#/definitions/V2QueryTemplates"
+        }
+    },
+    "definitions": {
+        "V2ChartOfAccounts": {
+            "type": "object",
+            "description": "Chart of accounts — top-level segments",
+            "additionalProperties": {
+                "$ref": "#/definitions/V2ChartSegment"
+            }
+        },
+        "V2ChartSegment": {
+            "description": "Segment within a chart of accounts. Dot-prefixed keys are properties; other keys are child segments.",
+            "oneOf": [
+                { "type": "null" },
+                {
+                    "type": "object",
+                    "properties": {
+                        ".self": {
+                            "type": "object",
+                            "description": "Marks this segment as a bookable account"
+                        },
+                        ".pattern": {
+                            "type": "string",
+                            "description": "Regex pattern for validating segment values"
+                        },
+                        ".rules": {
+                            "$ref": "#/definitions/V2ChartAccountRules"
+                        },
+                        ".metadata": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "$ref": "#/definitions/V2ChartAccountMetadata"
+                            }
+                        }
+                    },
+                    "additionalProperties": {
+                        "$ref": "#/definitions/V2ChartSegment"
+                    }
+                }
+            ]
+        },
+        "V2ChartAccountRules": {
+            "type": "object",
+            "description": "Account rules (extensible)"
+        },
+        "V2ChartAccountMetadata": {
+            "type": "object",
+            "description": "Account metadata field. The Ledger API only accepts 'default' (string).",
+            "properties": {
+                "default": {
+                    "type": "string",
+                    "description": "Default value (must be a string — non-string values should be JSON-stringified before validation)"
+                }
+            },
+            "additionalProperties": false
+        },
+        "Runtime": {
+            "type": "string",
+            "description": "Numscript runtime engine",
+            "enum": ["experimental-interpreter", "machine"]
+        },
+        "V2TransactionTemplates": {
+            "type": "object",
+            "description": "Transaction templates — keys are template IDs",
+            "additionalProperties": {
+                "$ref": "#/definitions/V2TransactionTemplate"
+            }
+        },
+        "V2TransactionTemplate": {
+            "type": "object",
+            "description": "Transaction template with Numscript code",
+            "required": ["script"],
+            "additionalProperties": false,
+            "properties": {
+                "script": {
+                    "type": "string",
+                    "description": "Numscript code for the transaction"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Human-readable description"
+                },
+                "runtime": {
+                    "$ref": "#/definitions/Runtime"
+                }
+            }
+        },
+        "V2QueryTemplates": {
+            "type": "object",
+            "description": "Query templates — keys are query IDs",
+            "additionalProperties": {
+                "$ref": "#/definitions/V2QueryTemplate"
+            }
+        },
+        "V2QueryTemplate": {
+            "type": "object",
+            "description": "Query template for parameterized queries",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "resource": {
+                    "$ref": "#/definitions/V2QueryResource"
+                },
+                "params": {
+                    "type": "object",
+                    "description": "Default query parameters"
+                },
+                "vars": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/V2QueryTemplateVar"
+                    }
+                },
+                "body": {
+                    "type": "object",
+                    "description": "Filter body",
+                    "additionalProperties": true
+                }
+            },
+            "additionalProperties": false
+        },
+        "V2QueryResource": {
+            "type": "string",
+            "enum": ["transactions", "accounts", "logs", "volumes"]
+        },
+        "V2QueryTemplateVar": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "description": "Variable type"
+                },
+                "default": {
+                    "description": "Default value"
+                }
+            }
+        }
+    }
+}
