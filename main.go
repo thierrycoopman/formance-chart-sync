@@ -432,7 +432,7 @@ func runPush() error {
 	// Track which ledgers we've already checked to avoid redundant API calls.
 	checkedLedgers := make(map[string]bool)
 
-	var successes []string
+	var successes []chartSuccess
 	var failures []chartFailure
 
 	prov := push.Provenance{
@@ -574,23 +574,27 @@ func runPush() error {
 			ghNotice("Pushed")
 		}
 
-		successes = append(successes, rel)
+		successes = append(successes, chartSuccess{rel, version, targetLedger})
 		ghEndGroup()
 	}
 
-	writeSummary(successes, failures, cfg.DryRun)
-
 	// After successful pushes, list all schemas so the user sees the result.
+	var schemas []push.Schema
 	if !cfg.DryRun && len(successes) > 0 && len(failures) == 0 {
 		fmt.Println()
 		ghNotice("Listing installed schemas")
-		schemas, listErr := pusher.ListSchemas(ctx)
+		listed, listErr := pusher.ListSchemas(ctx)
 		if listErr != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not list schemas after push: %v\n", listErr)
-		} else if err := printSchemaTable(schemas); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not print schema list: %v\n", err)
+		} else {
+			schemas = listed
+			if err := printSchemaTable(schemas); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not print schema list: %v\n", err)
+			}
 		}
 	}
+
+	writeSummary(successes, failures, schemas, cfg.ServerURL, cfg.DryRun)
 
 	if len(failures) > 0 {
 		return fmt.Errorf("%d chart(s) failed to process", len(failures))
@@ -680,12 +684,45 @@ func dumpPayload(rel, version string, ledgerJSON []byte) {
 	fmt.Fprintf(os.Stderr, "\n=== PAYLOAD for %s (version: %s) ===\n%s\n=== END PAYLOAD ===\n\n", rel, version, pretty)
 }
 
+type chartSuccess struct {
+	rel     string
+	version string
+	ledger  string
+}
+
 type chartFailure struct {
 	rel string
 	err error
 }
 
-func writeSummary(successes []string, failures []chartFailure, dryRun bool) {
+// parseFormanceURL extracts organization and stack from a Formance Cloud URL.
+// Pattern: https://{org}-{stack}.{env}.formance.cloud
+// Returns empty strings if the URL doesn't match.
+func parseFormanceURL(serverURL string) (org, stack string) {
+	serverURL = strings.TrimRight(serverURL, "/")
+	// Strip scheme.
+	host := serverURL
+	if idx := strings.Index(host, "://"); idx >= 0 {
+		host = host[idx+3:]
+	}
+	// Strip port and path.
+	if idx := strings.IndexAny(host, ":/"); idx >= 0 {
+		host = host[:idx]
+	}
+	// Expect {org}-{stack}.*.formance.cloud
+	if !strings.HasSuffix(host, ".formance.cloud") {
+		return "", ""
+	}
+	subdomain, _, _ := strings.Cut(host, ".")
+	// Split on the last hyphen: org may contain hyphens, stack does not.
+	idx := strings.LastIndex(subdomain, "-")
+	if idx <= 0 || idx == len(subdomain)-1 {
+		return "", ""
+	}
+	return subdomain[:idx], subdomain[idx+1:]
+}
+
+func writeSummary(successes []chartSuccess, failures []chartFailure, schemas []push.Schema, serverURL string, dryRun bool) {
 	summaryPath := os.Getenv("GITHUB_STEP_SUMMARY")
 	if summaryPath == "" {
 		return
@@ -696,20 +733,70 @@ func writeSummary(successes []string, failures []chartFailure, dryRun bool) {
 	}
 	defer f.Close()
 
-	label := "Synced"
-	if dryRun {
-		label = "Validated (dry run)"
-	}
-
+	// --- Target info ---
 	fmt.Fprintln(f, "## Chart Sync Results")
 	fmt.Fprintln(f)
-	fmt.Fprintln(f, "| File | Status |")
-	fmt.Fprintln(f, "|------|--------|")
-	for _, s := range successes {
-		fmt.Fprintf(f, "| `%s` | %s |\n", s, label)
+
+	org, stack := parseFormanceURL(serverURL)
+	if org != "" {
+		// Collect unique ledgers from successes.
+		ledgers := make(map[string]struct{})
+		for _, s := range successes {
+			if s.ledger != "" {
+				ledgers[s.ledger] = struct{}{}
+			}
+		}
+		var ledgerList []string
+		for l := range ledgers {
+			ledgerList = append(ledgerList, l)
+		}
+
+		fmt.Fprintln(f, "| | |")
+		fmt.Fprintln(f, "|---|---|")
+		fmt.Fprintf(f, "| **Organization** | `%s` |\n", org)
+		fmt.Fprintf(f, "| **Stack** | `%s` |\n", stack)
+		if len(ledgerList) == 1 {
+			fmt.Fprintf(f, "| **Ledger** | `%s` |\n", ledgerList[0])
+		} else if len(ledgerList) > 1 {
+			fmt.Fprintf(f, "| **Ledgers** | `%s` |\n", strings.Join(ledgerList, "`, `"))
+		}
+		fmt.Fprintln(f)
+	}
+
+	if dryRun {
+		fmt.Fprintln(f, "| File | Version | Status |")
+		fmt.Fprintln(f, "|------|---------|--------|")
+		for _, s := range successes {
+			fmt.Fprintf(f, "| `%s` | `%s` | Validated (dry run) |\n", s.rel, s.version)
+		}
+	} else {
+		fmt.Fprintln(f, "| File | Version | Status |")
+		fmt.Fprintln(f, "|------|---------|--------|")
+		for _, s := range successes {
+			fmt.Fprintf(f, "| `%s` | `%s` | Synced |\n", s.rel, s.version)
+		}
 	}
 	for _, fail := range failures {
 		escaped := strings.ReplaceAll(fail.err.Error(), "|", "\\|")
-		fmt.Fprintf(f, "| `%s` | %s |\n", fail.rel, escaped)
+		fmt.Fprintf(f, "| `%s` | — | %s |\n", fail.rel, escaped)
+	}
+
+	// --- Installed schemas overview ---
+	if len(schemas) > 0 {
+		fmt.Fprintln(f)
+		fmt.Fprintln(f, "## Installed Schemas")
+		fmt.Fprintln(f)
+		fmt.Fprintln(f, "| Version | Created | Accounts | Transactions | Queries |")
+		fmt.Fprintln(f, "|---------|---------|----------|--------------|---------|")
+		for _, s := range schemas {
+			created := s.CreatedAt.Format(time.DateTime)
+			fmt.Fprintf(f, "| `%s` | %s | %d | %d | %d |\n",
+				s.Version,
+				created,
+				len(s.Chart),
+				len(s.Transactions),
+				len(s.Queries),
+			)
+		}
 	}
 }
