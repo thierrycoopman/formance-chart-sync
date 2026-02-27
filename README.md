@@ -49,15 +49,58 @@ On **push to main**, charts are validated and pushed to the Ledger.
 | `dry_run` | No | `false` | Validate without pushing |
 | `force` | No | `false` | Skip Ledger version check |
 
-### Required Secrets
+### Secrets and Variables
 
-Create these in your repository settings under **Settings > Secrets and variables > Actions**:
+The action needs credentials and a server URL. These should be stored as **secrets** (never hardcoded in workflows). Optional settings can be stored as **variables** for convenience.
 
-| Secret | Description |
-|--------|-------------|
-| `FORMANCE_CLIENT_ID` | OAuth2 client ID from the Formance dashboard |
-| `FORMANCE_CLIENT_SECRET` | OAuth2 client secret from the Formance dashboard |
-| `FORMANCE_SERVER_URL` | Your Formance environment URL (e.g. `https://org.eu-west-1.formance.cloud`) |
+Go to your repository **Settings > Secrets and variables > Actions**.
+
+**Secrets** (required — under the "Secrets" tab):
+
+| Secret | Description | Example |
+|--------|-------------|---------|
+| `FORMANCE_CLIENT_ID` | OAuth2 client ID from the Formance dashboard | `abc123def456` |
+| `FORMANCE_CLIENT_SECRET` | OAuth2 client secret from the Formance dashboard | `secret_...` |
+| `FORMANCE_SERVER_URL` | Your Formance environment URL | `https://myorg-abc123.eu-west-1.formance.cloud` |
+
+**Variables** (optional — under the "Variables" tab):
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `FORMANCE_LEDGER` | Override the target ledger name (defaults to `ledger.name` in chart YAML) | `payments-ledger` |
+| `FORMANCE_VERSION` | Override the schema version prefix (defaults to `version` in chart YAML) | `v2` |
+| `FORMANCE_CHART_GLOB` | Glob pattern for chart files (defaults to `**/*.chart.yaml`) | `charts/**/*.yaml` |
+
+Variables are referenced with `${{ vars.VARIABLE_NAME }}` in workflows, while secrets use `${{ secrets.SECRET_NAME }}`.
+
+### Workflow Examples
+
+**Minimal** — credentials only, everything else from chart YAML:
+
+```yaml
+- uses: thierrycoopman/formance-chart-sync@v1
+  with:
+    client_id:     ${{ secrets.FORMANCE_CLIENT_ID }}
+    client_secret: ${{ secrets.FORMANCE_CLIENT_SECRET }}
+    server_url:    ${{ secrets.FORMANCE_SERVER_URL }}
+```
+
+**With optional inputs** — using variables and explicit settings:
+
+```yaml
+- uses: thierrycoopman/formance-chart-sync@v1
+  with:
+    client_id:     ${{ secrets.FORMANCE_CLIENT_ID }}
+    client_secret: ${{ secrets.FORMANCE_CLIENT_SECRET }}
+    server_url:    ${{ secrets.FORMANCE_SERVER_URL }}
+    ledger:        ${{ vars.FORMANCE_LEDGER }}
+    version:       ${{ vars.FORMANCE_VERSION }}
+    chart_glob:    "charts/**/*.yaml"
+    dry_run:       ${{ github.event_name == 'pull_request' }}
+    force:         "true"
+```
+
+When a variable is not set, `${{ vars.FORMANCE_LEDGER }}` evaluates to an empty string and the action falls back to the chart YAML value.
 
 ## Step-by-Step: Adding Chart Sync to a Repository
 
@@ -134,12 +177,12 @@ jobs:
 
 Adjust `paths` and `chart_glob` to match where your chart files live.
 
-### 3. Add secrets
+### 3. Add secrets and variables
 
-Go to your repository **Settings > Secrets and variables > Actions** and add:
-- `FORMANCE_CLIENT_ID`
-- `FORMANCE_CLIENT_SECRET`
-- `FORMANCE_SERVER_URL`
+Go to your repository **Settings > Secrets and variables > Actions**:
+
+1. Under **Secrets**, add `FORMANCE_CLIENT_ID`, `FORMANCE_CLIENT_SECRET`, and `FORMANCE_SERVER_URL`
+2. Optionally under **Variables**, add `FORMANCE_LEDGER`, `FORMANCE_VERSION`, or `FORMANCE_CHART_GLOB` if you want to override the defaults from chart YAML
 
 ### 4. Push
 
