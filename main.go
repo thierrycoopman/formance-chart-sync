@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -186,7 +187,7 @@ func runList(args []string) error {
 		return enc.Encode(schemas)
 	}
 
-	return printSchemaTable(schemas)
+	return printSchemaTable(cf.ledger, schemas)
 }
 
 // --- get command ---
@@ -578,23 +579,36 @@ func runPush() error {
 		ghEndGroup()
 	}
 
-	// After successful pushes, list all schemas so the user sees the result.
-	var schemas []push.Schema
+	// After successful pushes, list schemas for each unique ledger.
+	ledgerSchemas := make(map[string][]push.Schema)
 	if !cfg.DryRun && len(successes) > 0 && len(failures) == 0 {
-		fmt.Println()
-		ghNotice("Listing installed schemas")
-		listed, listErr := pusher.ListSchemas(ctx)
-		if listErr != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not list schemas after push: %v\n", listErr)
-		} else {
-			schemas = listed
-			if err := printSchemaTable(schemas); err != nil {
+		// Collect unique ledgers in order of first appearance.
+		seen := make(map[string]bool)
+		var ledgers []string
+		for _, s := range successes {
+			if !seen[s.ledger] {
+				seen[s.ledger] = true
+				ledgers = append(ledgers, s.ledger)
+			}
+		}
+
+		for _, ledger := range ledgers {
+			fmt.Println()
+			ghNotice("Listing installed schemas for ledger %q", ledger)
+			pusher.SetLedger(ledger)
+			listed, listErr := pusher.ListSchemas(ctx)
+			if listErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not list schemas for %q: %v\n", ledger, listErr)
+				continue
+			}
+			ledgerSchemas[ledger] = listed
+			if err := printSchemaTable(ledger, listed); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: could not print schema list: %v\n", err)
 			}
 		}
 	}
 
-	writeSummary(successes, failures, schemas, cfg.ServerURL, cfg.DryRun)
+	writeSummary(successes, failures, ledgerSchemas, cfg.ServerURL, cfg.DryRun)
 
 	if len(failures) > 0 {
 		return fmt.Errorf("%d chart(s) failed to process", len(failures))
@@ -602,13 +616,14 @@ func runPush() error {
 	return nil
 }
 
-// printSchemaTable prints a list of schemas as a formatted table.
-func printSchemaTable(schemas []push.Schema) error {
+// printSchemaTable prints a list of schemas as a formatted table for the given ledger.
+func printSchemaTable(ledger string, schemas []push.Schema) error {
 	if len(schemas) == 0 {
-		fmt.Println("No schemas found.")
+		fmt.Printf("No schemas found for ledger %q.\n", ledger)
 		return nil
 	}
 
+	fmt.Printf("Ledger: %s\n", ledger)
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "VERSION\tCREATED\tACCOUNTS\tTRANSACTIONS\tQUERIES")
 	for _, s := range schemas {
@@ -722,7 +737,7 @@ func parseFormanceURL(serverURL string) (org, stack string) {
 	return subdomain[:idx], subdomain[idx+1:]
 }
 
-func writeSummary(successes []chartSuccess, failures []chartFailure, schemas []push.Schema, serverURL string, dryRun bool) {
+func writeSummary(successes []chartSuccess, failures []chartFailure, ledgerSchemas map[string][]push.Schema, serverURL string, dryRun bool) {
 	summaryPath := os.Getenv("GITHUB_STEP_SUMMARY")
 	if summaryPath == "" {
 		return
@@ -739,64 +754,61 @@ func writeSummary(successes []chartSuccess, failures []chartFailure, schemas []p
 
 	org, stack := parseFormanceURL(serverURL)
 	if org != "" {
-		// Collect unique ledgers from successes.
-		ledgers := make(map[string]struct{})
-		for _, s := range successes {
-			if s.ledger != "" {
-				ledgers[s.ledger] = struct{}{}
-			}
-		}
-		var ledgerList []string
-		for l := range ledgers {
-			ledgerList = append(ledgerList, l)
-		}
-
 		fmt.Fprintln(f, "| | |")
 		fmt.Fprintln(f, "|---|---|")
 		fmt.Fprintf(f, "| **Organization** | `%s` |\n", org)
 		fmt.Fprintf(f, "| **Stack** | `%s` |\n", stack)
-		if len(ledgerList) == 1 {
-			fmt.Fprintf(f, "| **Ledger** | `%s` |\n", ledgerList[0])
-		} else if len(ledgerList) > 1 {
-			fmt.Fprintf(f, "| **Ledgers** | `%s` |\n", strings.Join(ledgerList, "`, `"))
-		}
 		fmt.Fprintln(f)
 	}
 
+	// --- Per-file results with ledger column ---
+	label := "Synced"
 	if dryRun {
-		fmt.Fprintln(f, "| File | Version | Status |")
-		fmt.Fprintln(f, "|------|---------|--------|")
-		for _, s := range successes {
-			fmt.Fprintf(f, "| `%s` | `%s` | Validated (dry run) |\n", s.rel, s.version)
-		}
-	} else {
-		fmt.Fprintln(f, "| File | Version | Status |")
-		fmt.Fprintln(f, "|------|---------|--------|")
-		for _, s := range successes {
-			fmt.Fprintf(f, "| `%s` | `%s` | Synced |\n", s.rel, s.version)
-		}
+		label = "Validated (dry run)"
+	}
+
+	fmt.Fprintln(f, "| File | Ledger | Version | Status |")
+	fmt.Fprintln(f, "|------|--------|---------|--------|")
+	for _, s := range successes {
+		fmt.Fprintf(f, "| `%s` | `%s` | `%s` | %s |\n", s.rel, s.ledger, s.version, label)
 	}
 	for _, fail := range failures {
 		escaped := strings.ReplaceAll(fail.err.Error(), "|", "\\|")
-		fmt.Fprintf(f, "| `%s` | — | %s |\n", fail.rel, escaped)
+		fmt.Fprintf(f, "| `%s` | — | — | %s |\n", fail.rel, escaped)
 	}
 
-	// --- Installed schemas overview ---
-	if len(schemas) > 0 {
+	// --- Installed schemas grouped by ledger ---
+	if len(ledgerSchemas) > 0 {
+		// Sort ledger names for deterministic output.
+		ledgers := make([]string, 0, len(ledgerSchemas))
+		for l := range ledgerSchemas {
+			ledgers = append(ledgers, l)
+		}
+		slices.Sort(ledgers)
+
 		fmt.Fprintln(f)
 		fmt.Fprintln(f, "## Installed Schemas")
-		fmt.Fprintln(f)
-		fmt.Fprintln(f, "| Version | Created | Accounts | Transactions | Queries |")
-		fmt.Fprintln(f, "|---------|---------|----------|--------------|---------|")
-		for _, s := range schemas {
-			created := s.CreatedAt.Format(time.DateTime)
-			fmt.Fprintf(f, "| `%s` | %s | %d | %d | %d |\n",
-				s.Version,
-				created,
-				len(s.Chart),
-				len(s.Transactions),
-				len(s.Queries),
-			)
+
+		for _, ledger := range ledgers {
+			schemas := ledgerSchemas[ledger]
+			if len(schemas) == 0 {
+				continue
+			}
+			fmt.Fprintln(f)
+			fmt.Fprintf(f, "### `%s`\n", ledger)
+			fmt.Fprintln(f)
+			fmt.Fprintln(f, "| Version | Created | Accounts | Transactions | Queries |")
+			fmt.Fprintln(f, "|---------|---------|----------|--------------|---------|")
+			for _, s := range schemas {
+				created := s.CreatedAt.Format(time.DateTime)
+				fmt.Fprintf(f, "| `%s` | %s | %d | %d | %d |\n",
+					s.Version,
+					created,
+					len(s.Chart),
+					len(s.Transactions),
+					len(s.Queries),
+				)
+			}
 		}
 	}
 }
