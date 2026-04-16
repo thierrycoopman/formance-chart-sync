@@ -184,6 +184,68 @@ func TestCollectFileHashes(t *testing.T) {
 	}
 }
 
+// TestDeduplicationFlow simulates the full CI/CD dedup scenario:
+// 1. Multiple chart files exist in a repo
+// 2. Some have already been pushed (their hashes appear in existing schemas)
+// 3. A new CI run processes all charts
+// 4. Charts whose file hash is already in the ledger should be skipped
+func TestDeduplicationFlow(t *testing.T) {
+	chartA := []byte("version: v1\nledger:\n  name: test\nchart:\n  accounts:\n    .self: {}\n")
+	chartB := []byte("version: v1\nledger:\n  name: test\nchart:\n  users:\n    .self: {}\n")
+	chartC := []byte("version: v1\nledger:\n  name: test\nchart:\n  orders:\n    .self: {}\n")
+
+	hashA := FileHash(chartA)
+	hashB := FileHash(chartB)
+	_ = FileHash(chartC) // chartC is new — its hash should NOT appear in existing schemas
+
+	// Simulate: charts A and B were pushed on a previous commit (different SHA, same file content).
+	existingSchemas := []Schema{
+		{Version: "v1+org-repo.main.charts-a.yaml.old1111." + hashA},
+		{Version: "v1+org-repo.main.charts-b.yaml.old2222." + hashB},
+	}
+
+	// Collect hashes the way runPush does.
+	ledgerHashes := CollectFileHashes(existingSchemas)
+
+	// Now simulate a new CI run with a new commit touching all three charts.
+	charts := []struct {
+		name     string
+		rawYAML  []byte
+		wantSkip bool
+	}{
+		{"charts/a.yaml", chartA, true},  // hash already exists
+		{"charts/b.yaml", chartB, true},  // hash already exists
+		{"charts/c.yaml", chartC, false}, // new chart, should be pushed
+	}
+
+	for _, tc := range charts {
+		fileHash := FileHash(tc.rawYAML)
+		skipped := ledgerHashes[fileHash]
+		if skipped != tc.wantSkip {
+			t.Errorf("%s: skip=%v, want %v (hash=%s)", tc.name, skipped, tc.wantSkip, fileHash)
+		}
+	}
+
+	// Verify that hashes are from raw bytes, not transformed in any way.
+	// Changing even one byte should produce a different hash.
+	chartAModified := []byte("version: v1\nledger:\n  name: test\nchart:\n  accounts:\n    .self: {}\n\n")
+	if FileHash(chartAModified) == hashA {
+		t.Error("adding a newline should change the hash — proves we hash raw bytes, not parsed YAML")
+	}
+
+	// Verify the hash in the version string round-trips correctly.
+	c := &Client{baseVersion: "v1"}
+	prov := Provenance{Repository: "org/repo", Branch: "main", FilePath: "charts/a.yaml", CommitSHA: "newcommit1234567890"}
+	version := c.BuildVersion(chartA, prov)
+	extractedHash, ok := FileHashFromVersion(version)
+	if !ok {
+		t.Fatalf("could not extract hash from version %q", version)
+	}
+	if extractedHash != hashA {
+		t.Errorf("round-trip hash mismatch: FileHash=%q, extracted=%q", hashA, extractedHash)
+	}
+}
+
 func TestSanitize(t *testing.T) {
 	tests := []struct {
 		input string
