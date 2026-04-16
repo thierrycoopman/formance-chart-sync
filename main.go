@@ -330,12 +330,32 @@ func countFields(chartJSON []byte) (accounts, transactions int) {
 		return 0, 0
 	}
 	if c, ok := data["chart"].(map[string]any); ok {
-		accounts = len(c)
+		accounts = countAccounts(c)
 	}
 	if t, ok := data["transactions"].(map[string]any); ok {
 		transactions = len(t)
 	}
 	return accounts, transactions
+}
+
+// countAccounts recursively counts bookable accounts (segments with ".self")
+// in a chart of accounts tree.
+func countAccounts(segment map[string]any) int {
+	count := 0
+	for key, val := range segment {
+		if key == ".self" {
+			count++
+			continue
+		}
+		// Skip other dot-keys (.metadata, .pattern, .rules).
+		if strings.HasPrefix(key, ".") {
+			continue
+		}
+		if child, ok := val.(map[string]any); ok {
+			count += countAccounts(child)
+		}
+	}
+	return count
 }
 
 // findSchemaPath looks for the schema file in common locations.
@@ -432,6 +452,7 @@ func runPush() error {
 
 	// Track which ledgers we've already checked to avoid redundant API calls.
 	checkedLedgers := make(map[string]bool)
+	ledgerHashes := make(map[string]map[string]bool)
 
 	var successes []chartSuccess
 	var failures []chartFailure
@@ -518,6 +539,15 @@ func runPush() error {
 				ghNotice("Ledger %q created", targetLedger)
 			}
 			checkedLedgers[targetLedger] = true
+
+			schemas, listErr := pusher.ListSchemas(ctx)
+			if listErr != nil {
+				ghNotice("Warning: could not list existing schemas for dedup: %v — will push anyway", listErr)
+			} else {
+				ledgerHashes[targetLedger] = push.CollectFileHashes(schemas)
+				ghNotice("Found %d existing schema(s) with %d unique file hash(es)",
+					len(schemas), len(ledgerHashes[targetLedger]))
+			}
 		}
 
 		// Extract Ledger-compatible schema (chart, transactions, queries only).
@@ -559,8 +589,16 @@ func runPush() error {
 		version := pusher.BuildVersion(rawYAML, prov)
 		ghNotice("Version: %s", version)
 
+		fileHash := push.FileHash(rawYAML)
+		if hashes, ok := ledgerHashes[targetLedger]; ok && hashes[fileHash] {
+			ghNotice("Skipped (file hash %s already exists in ledger %q)", fileHash, targetLedger)
+			successes = append(successes, chartSuccess{rel, version + " (unchanged)", targetLedger})
+			ghEndGroup()
+			continue
+		}
+
 		if cfg.DryRun {
-			ghNotice("Dry run — skipping push")
+			ghNotice("Dry run — skipping push (file hash: %s)", fileHash)
 			dumpPayload(rel, version, ledgerJSON)
 		} else {
 			if pushErr := pusher.Push(ctx, version, ledgerJSON); pushErr != nil {
@@ -631,7 +669,7 @@ func printSchemaTable(ledger string, schemas []push.Schema) error {
 		fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\n",
 			s.Version,
 			created,
-			len(s.Chart),
+			countAccounts(s.Chart),
 			len(s.Transactions),
 			len(s.Queries),
 		)
@@ -770,7 +808,11 @@ func writeSummary(successes []chartSuccess, failures []chartFailure, ledgerSchem
 	fmt.Fprintln(f, "| File | Ledger | Version | Status |")
 	fmt.Fprintln(f, "|------|--------|---------|--------|")
 	for _, s := range successes {
-		fmt.Fprintf(f, "| `%s` | `%s` | `%s` | %s |\n", s.rel, s.ledger, s.version, label)
+		status := label
+		if strings.HasSuffix(s.version, " (unchanged)") {
+			status = "Skipped (unchanged)"
+		}
+		fmt.Fprintf(f, "| `%s` | `%s` | `%s` | %s |\n", s.rel, s.ledger, s.version, status)
 	}
 	for _, fail := range failures {
 		escaped := strings.ReplaceAll(fail.err.Error(), "|", "\\|")
@@ -804,7 +846,7 @@ func writeSummary(successes []chartSuccess, failures []chartFailure, ledgerSchem
 				fmt.Fprintf(f, "| `%s` | %s | %d | %d | %d |\n",
 					s.Version,
 					created,
-					len(s.Chart),
+					countAccounts(s.Chart),
 					len(s.Transactions),
 					len(s.Queries),
 				)
