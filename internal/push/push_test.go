@@ -163,6 +163,27 @@ func TestFileHashFromVersion(t *testing.T) {
 	}
 }
 
+func TestCollectFileHashes(t *testing.T) {
+	schemas := []Schema{
+		{Version: "v1+org-repo.main.charts-foo.yaml.abc1234.e57b43ad"},
+		{Version: "v1+org-repo.main.charts-bar.yaml.def5678.f3e9a0b1"},
+		{Version: "v1+org-repo.main.charts-baz.yaml.ghi9012.e57b43ad"}, // duplicate hash
+		{Version: "v1"},                                                   // no metadata
+	}
+
+	hashes := CollectFileHashes(schemas)
+
+	if len(hashes) != 2 {
+		t.Errorf("expected 2 unique hashes, got %d: %v", len(hashes), hashes)
+	}
+	if !hashes["e57b43ad"] {
+		t.Error("missing hash e57b43ad")
+	}
+	if !hashes["f3e9a0b1"] {
+		t.Error("missing hash f3e9a0b1")
+	}
+}
+
 func TestSanitize(t *testing.T) {
 	tests := []struct {
 		input string

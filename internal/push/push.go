@@ -340,6 +340,19 @@ func FileHashFromVersion(version string) (string, bool) {
 	return hash, true
 }
 
+// CollectFileHashes extracts the set of unique file hashes from a list of schemas.
+// It returns a map where each key is an 8-character file hash found in the
+// schema version strings. Schemas without valid version metadata are skipped.
+func CollectFileHashes(schemas []Schema) map[string]bool {
+	hashes := make(map[string]bool, len(schemas))
+	for _, s := range schemas {
+		if h, ok := FileHashFromVersion(s.Version); ok {
+			hashes[h] = true
+		}
+	}
+	return hashes
+}
+
 // BuildVersion constructs a version string that encodes provenance metadata.
 // Format: {baseVersion}+{repo}.{branch}.{filepath}.{commitSHA7}.{sha256hex8}
 //
