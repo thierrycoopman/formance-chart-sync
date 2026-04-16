@@ -312,13 +312,41 @@ func (c *Client) CreateLedger(ctx context.Context) error {
 	return err
 }
 
+// FileHash computes an 8-character hex hash of the raw YAML bytes.
+// It uses SHA-256 and returns the first 8 hex characters.
+func FileHash(rawYAML []byte) string {
+	h := fmt.Sprintf("%x", sha256.Sum256(rawYAML))
+	return h[:8]
+}
+
+// FileHashFromVersion extracts the 8-character file hash from an existing
+// version string. The version format is:
+// {baseVersion}+{repo}.{branch}.{filepath}.{commitSHA7}.{fileHash8}
+// Returns the hash and true if found, or ("", false) if the version string
+// does not contain a valid file hash.
+func FileHashFromVersion(version string) (string, bool) {
+	_, meta, hasMeta := strings.Cut(version, "+")
+	if !hasMeta || meta == "" {
+		return "", false
+	}
+	parts := strings.Split(meta, ".")
+	if len(parts) < 2 {
+		return "", false
+	}
+	hash := parts[len(parts)-1]
+	if len(hash) != 8 {
+		return "", false
+	}
+	return hash, true
+}
+
 // BuildVersion constructs a version string that encodes provenance metadata.
 // Format: {baseVersion}+{repo}.{branch}.{filepath}.{commitSHA7}.{sha256hex8}
 //
 // The "+" follows semver build-metadata convention. The commit SHA and file
 // hash are truncated for readability while remaining unique enough for lookup.
 func (c *Client) BuildVersion(rawYAML []byte, prov Provenance) string {
-	fileHash := fmt.Sprintf("%x", sha256.Sum256(rawYAML))
+	fileHash := FileHash(rawYAML)
 
 	commitShort := prov.CommitSHA
 	if len(commitShort) > 7 {
@@ -330,7 +358,7 @@ func (c *Client) BuildVersion(rawYAML []byte, prov Provenance) string {
 		sanitize(prov.Branch),
 		sanitize(prov.FilePath),
 		commitShort,
-		fileHash[:8],
+		fileHash,
 	)
 
 	return c.baseVersion + "+" + meta

@@ -113,6 +113,56 @@ func TestSupportsSchemas(t *testing.T) {
 	}
 }
 
+func TestFileHash(t *testing.T) {
+	yaml1 := []byte("apiVersion: formance.com/v1alpha1\nkind: Chart\n")
+	yaml2 := []byte("different content")
+
+	h1 := FileHash(yaml1)
+	h2 := FileHash(yaml2)
+
+	if len(h1) != 8 {
+		t.Errorf("FileHash should return 8 chars, got %d: %q", len(h1), h1)
+	}
+	if h1 == h2 {
+		t.Error("different content should produce different hashes")
+	}
+	if h1 != FileHash(yaml1) {
+		t.Error("FileHash should be deterministic")
+	}
+}
+
+func TestFileHashFromVersion(t *testing.T) {
+	tests := []struct {
+		version string
+		want    string
+		wantOK  bool
+	}{
+		{
+			"v1.0.12+thierrycoopman-formance-charts.main.charts-analog.fbo.schema.yaml.09f5caf.e57b43ad",
+			"e57b43ad",
+			true,
+		},
+		{
+			"v1+org-my-repo.main.charts-accounts.chart.yaml.abc1234.f3e9a0b1",
+			"f3e9a0b1",
+			true,
+		},
+		{"v1", "", false},
+		{"v1+", "", false},
+		{"v1+single", "", false},
+	}
+
+	for _, tt := range tests {
+		got, ok := FileHashFromVersion(tt.version)
+		if ok != tt.wantOK {
+			t.Errorf("FileHashFromVersion(%q): ok=%v, want %v", tt.version, ok, tt.wantOK)
+		}
+		if got != tt.want {
+			t.Errorf("FileHashFromVersion(%q) = %q, want %q", tt.version, got, tt.want)
+		}
+	}
+}
+
 func TestSanitize(t *testing.T) {
 	tests := []struct {
 		input string
