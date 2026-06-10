@@ -338,22 +338,48 @@ func countFields(chartJSON []byte) (accounts, transactions int) {
 	return accounts, transactions
 }
 
-// countAccounts recursively counts bookable accounts (segments with ".self")
-// in a chart of accounts tree.
-func countAccounts(segment map[string]any) int {
+// countAccounts counts bookable accounts in a chart-of-accounts tree. A node
+// is bookable when it carries ".self" OR it is a leaf segment (it has no child
+// segments — only dot-prefixed property keys like .metadata / .pattern).
+func countAccounts(chart map[string]any) int {
 	count := 0
-	for key, val := range segment {
+	for key, val := range chart {
+		// Top-level dot-keys are not segments.
+		if strings.HasPrefix(key, ".") {
+			continue
+		}
+		count += countNode(val)
+	}
+	return count
+}
+
+// countNode returns the number of bookable accounts in the subtree rooted at
+// the given segment node. A node counts as one bookable account when it has
+// ".self" or no child segments (a true leaf); its child segments are counted
+// recursively.
+func countNode(node any) int {
+	m, ok := node.(map[string]any)
+	if !ok {
+		// A nil / scalar body (e.g. `segment:` with no children) is a leaf.
+		return 1
+	}
+	count := 0
+	hasSelf := false
+	childSegments := 0
+	for key, val := range m {
 		if key == ".self" {
-			count++
+			hasSelf = true
 			continue
 		}
 		// Skip other dot-keys (.metadata, .pattern, .rules).
 		if strings.HasPrefix(key, ".") {
 			continue
 		}
-		if child, ok := val.(map[string]any); ok {
-			count += countAccounts(child)
-		}
+		childSegments++
+		count += countNode(val)
+	}
+	if hasSelf || childSegments == 0 {
+		count++
 	}
 	return count
 }
