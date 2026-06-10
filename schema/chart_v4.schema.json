@@ -87,8 +87,8 @@
             "properties": {
                 "code": {
                     "type": "string",
-                    "description": "Asset code (e.g., USD, EUR, USDC)",
-                    "pattern": "^[A-Z]{2,10}$"
+                    "description": "Asset code (e.g., USD, EUR, USDC, EUR_BENEFIT)",
+                    "pattern": "^[A-Z][A-Z0-9_]{1,15}$"
                 },
                 "precision": {
                     "type": "integer",
